@@ -18,7 +18,6 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "cmsis_os.h"
 #include "crc.h"
 #include "dma2d.h"
 #include "i2c.h"
@@ -26,7 +25,6 @@
 #include "spi.h"
 #include "tim.h"
 #include "usart.h"
-#include "usb_host.h"
 #include "gpio.h"
 #include "fmc.h"
 
@@ -53,13 +51,14 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-
+static uint32_t CzasKoncowy_Buzzera = 0;
+static uint32_t CzasDzialania_Buzzera = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
-void MX_FREERTOS_Init(void);
 /* USER CODE BEGIN PFP */
+void buzzer(uint32_t czas_trwania_ms);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -108,19 +107,16 @@ int main(void)
 
   /* USER CODE END 2 */
 
-  /* Call init function for freertos objects (in cmsis_os2.c) */
-  MX_FREERTOS_Init();
-
-  /* Start scheduler */
-  osKernelStart();
-
-  /* We should never get here as control is now taken by the scheduler */
-
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+
   while (1)
   {
     /* USER CODE END WHILE */
+	  buzzer(0);
+	  if (CzasDzialania_Buzzera == 0){
+		  buzzer(1000);
+	  }
 
     /* USER CODE BEGIN 3 */
   }
@@ -185,16 +181,28 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
     }
 }
 
-// --- Obsługa przerwań (musi być dodana) ---
-void EXTI0_IRQHandler(void)
+void buzzer(uint32_t czas_trwania_ms)
 {
-    HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_0);
+	if (czas_trwania_ms > 0)
+	{
+		CzasKoncowy_Buzzera = HAL_GetTick() + czas_trwania_ms;
+		CzasDzialania_Buzzera = czas_trwania_ms;
+
+		HAL_GPIO_WritePin(GPIOG, GPIO_PIN_14, GPIO_PIN_SET);
+		return;
+	}
+	if (CzasDzialania_Buzzera > 0)
+	{
+		if (HAL_GetTick() >= CzasKoncowy_Buzzera)
+		{
+			HAL_GPIO_WritePin(GPIOG, GPIO_PIN_14, GPIO_PIN_RESET);
+
+			CzasDzialania_Buzzera = 0;
+			CzasKoncowy_Buzzera = 0;
+		}
+	}
 }
 
-void EXTI1_IRQHandler(void)
-{
-    HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_1);
-}
 /* USER CODE END 4 */
 
 /**
