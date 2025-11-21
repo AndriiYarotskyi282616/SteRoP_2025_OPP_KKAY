@@ -1,36 +1,40 @@
-# STM32CubeIDE / Eclipse files
+# ---- STM32CubeIDE / Eclipse ----
 .settings/
-.metadata/
 Debug/
 Release/
 build/
-*/Debug/
-*/Release/
 *.launch
 *.log
 
-# CubeMX code generation
+# ---- Eclipse metadata ----
+.project
+.cproject
+.mxproject
+
+# ---- CubeMX ----
 *.mxproject
 *.ioc-backup*
 
-# Eclipse internal
-.project
-.cproject
-.loadpath
+# ---- Do NOT ignore the .ioc file ----
+#!*.ioc
 
-# Object files / binaries
+# ---- Object files / binaries ----
 *.o
+*.d
 *.elf
 *.bin
 *.hex
 *.map
 
-# Backup / temp
+# ---- Temporary / backup files ----
 *~
-*.swp
 *.tmp
 *.bak
+*.swp
 
-# OS-specific
+# ---- OS-specific ----
 .DS_Store
 Thumbs.db
+
+# ---- PDF / notes / docs: leave them if needed ----
+# (You have PDF and TXT files — keep them in repo)
