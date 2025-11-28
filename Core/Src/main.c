@@ -1,9 +1,9 @@
 /* USER CODE BEGIN Header */
 /**
-  **********************************************************************
+  ******************************************************************************
   * @file           : main.c
   * @brief          : Main program body
-  **********************************************************************
+  ******************************************************************************
   * @attention
   *
   * Copyright (c) 2025 STMicroelectronics.
@@ -13,11 +13,12 @@
   * in the root directory of this software component.
   * If no LICENSE file comes with this software, it is provided AS-IS.
   *
-  **********************************************************************
+  ******************************************************************************
   */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "cmsis_os.h"
 #include "crc.h"
 #include "dma2d.h"
 #include "i2c.h"
@@ -25,13 +26,13 @@
 #include "spi.h"
 #include "tim.h"
 #include "usart.h"
+#include "usb_host.h"
 #include "gpio.h"
 #include "fmc.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "stm32f4xx_hal.h"	 //obsługa pinów
-#include <stdlib.h>			 //dodaje fubkcje abs()
+#include "stm32f4xx_hal.h" //obsługa pinów
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -52,23 +53,13 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-static uint32_t CzasKoncowy_Buzzera = 0;
-static uint8_t aktywny_buzzer = 0;
-static uint32_t CzasTrwania_Buzzera = 1000;
-
-static uint16_t dlugosc = 2000;				//dlugość między bramkami w [mm]
-volatile uint32_t CzasBramkiA = 0;			//edytowalna podczas przerwań
-volatile uint32_t CzasBramkiB = 0;			//edytowalna podczas przerwań
-
-static double Ograniczenie = 1;
 
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
+void MX_FREERTOS_Init(void);
 /* USER CODE BEGIN PFP */
-void buzzer(void);
-uint16_t SpeedCheck(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -117,20 +108,22 @@ int main(void)
 
   /* USER CODE END 2 */
 
+  /* Call init function for freertos objects (in cmsis_os2.c) */
+  MX_FREERTOS_Init();
+
+  /* Start scheduler */
+  osKernelStart();
+
+  /* We should never get here as control is now taken by the scheduler */
+
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  CzasKoncowy_Buzzera = HAL_GetTick() + CzasTrwania_Buzzera;
-  aktywny_buzzer = 1;
-
   while (1)
   {
-	  SpeedCheck();
-	  buzzer();
-  }
     /* USER CODE END WHILE */
 
-
     /* USER CODE BEGIN 3 */
+  }
   /* USER CODE END 3 */
 }
 
@@ -181,45 +174,28 @@ void SystemClock_Config(void)
 
 /* USER CODE BEGIN 4 */
 // --- Funkcja obsługi przerwań ---
-void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
     if (GPIO_Pin == GPIO_PIN_0) {
         HAL_GPIO_TogglePin(GPIOG, GPIO_PIN_13); // LED1
-        CzasBramkiA = HAL_GetTick();
     }
 
     if (GPIO_Pin == GPIO_PIN_1) {
         HAL_GPIO_TogglePin(GPIOG, GPIO_PIN_14); // LED2
-        CzasBramkiB = HAL_GetTick();
     }
 }
 
-uint16_t SpeedCheck(void){
-	uint8_t speed = 0;
-	if (CzasBramkiA != 0 && CzasBramkiB != 0){
-		speed = abs((CzasBramkiA - CzasBramkiB) / dlugosc);	//wynik w [m/s]
-		CzasBramkiA = 0;
-		CzasBramkiB = 0;
-	}
-	if (speed > Ograniczenie){        //ustaw czas
-	  CzasKoncowy_Buzzera = HAL_GetTick() + CzasTrwania_Buzzera;
-	  aktywny_buzzer = 1;	//tu jednokrotnie włączy
-	}
-	return speed;
-}
-
-void buzzer(void)
+// --- Obsługa przerwań (musi być dodana) ---
+void EXTI0_IRQHandler(void)
 {
-	 if (HAL_GetTick() >= CzasKoncowy_Buzzera)
-	    {
-		 	 aktywny_buzzer = 0;	//to jednokrotnie wyłączy
-	    }
-
-	if (aktywny_buzzer) {
-			HAL_GPIO_TogglePin(GPIOG, GPIO_PIN_14);	//tu wielokrotnie
-	 }
+    HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_0);
 }
 
-
+void EXTI1_IRQHandler(void)
+{
+    HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_1);
+}
+/* USER CODE END 4 */
 
 /**
   * @brief  Period elapsed callback in non blocking mode
