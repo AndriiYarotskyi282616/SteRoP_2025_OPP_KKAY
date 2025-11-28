@@ -113,7 +113,6 @@ int main(void)
   MX_SPI5_Init();
   MX_TIM1_Init();
   MX_USART1_UART_Init();
-  MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
 
   /* USER CODE END 2 */
@@ -129,6 +128,7 @@ int main(void)
 	  buzzer();
   }
     /* USER CODE END WHILE */
+
 
     /* USER CODE BEGIN 3 */
   /* USER CODE END 3 */
@@ -194,35 +194,32 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 }
 
 uint16_t SpeedCheck(void){
-    uint8_t speed = 0;
-    if (CzasBramkiA != 0 && CzasBramkiB != 0){
-        speed = abs((CzasBramkiA - CzasBramkiB) / dlugosc);    //wynik w [m/s]
-        CzasBramkiA = 0;
-        CzasBramkiB = 0;
-    }
-    if (speed > Ograniczenie){
-      CzasKoncowy_Buzzera = HAL_GetTick() + CzasTrwania_Buzzera;
-      aktywny_buzzer = 1;
-      // WŁĄCZ PWM (3 kHz) na PB3 (TIM2_CH2)
-      HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);
-    }
-    return speed;
+	uint8_t speed = 0;
+	if (CzasBramkiA != 0 && CzasBramkiB != 0){
+		speed = abs((CzasBramkiA - CzasBramkiB) / dlugosc);	//wynik w [m/s]
+		CzasBramkiA = 0;
+		CzasBramkiB = 0;
+	}
+	if (speed > Ograniczenie){        //ustaw czas
+	  CzasKoncowy_Buzzera = HAL_GetTick() + CzasTrwania_Buzzera;
+	  aktywny_buzzer = 1;	//tu jednokrotnie włączy
+	}
+	return speed;
 }
 
 void buzzer(void)
 {
-    // Jeżeli czas trwania buzzera minął ORAZ buzzer jest aktywny
-	if (HAL_GetTick() >= CzasKoncowy_Buzzera && aktywny_buzzer == 1)
-	{
-		 aktywny_buzzer = 0;	// to jednokrotnie wyłączy
+	 if (HAL_GetTick() >= CzasKoncowy_Buzzera)
+	    {
+		 	 aktywny_buzzer = 0;	//to jednokrotnie wyłączy
+	    }
 
-         // WYŁĄCZENIE PWM
-         HAL_TIM_PWM_Stop(&htim2, TIM_CHANNEL_2);
-	}
-
+	if (aktywny_buzzer) {
+			HAL_GPIO_TogglePin(GPIOG, GPIO_PIN_14);	//tu wielokrotnie
+	 }
 }
 
-/* USER CODE END 4 */
+
 
 /**
   * @brief  Period elapsed callback in non blocking mode
