@@ -18,20 +18,20 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "crc.h"
 #include "dma2d.h"
-#include "i2c.h"
 #include "ltdc.h"
 #include "spi.h"
-#include "tim.h"
-#include "usart.h"
-#include "gpio.h"
 #include "fmc.h"
+#include "i2c.h"
+#include "gpio.h"
+#include "tim.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "stm32f4xx_hal.h"	 //obsługa pinów
-#include <stdlib.h>			 //dodaje fubkcje abs()
+#include "stm32f429i_discovery_lcd.h"
+#include "stm32f429i_discovery_ts.h"
+#include <stdio.h>
+#include <stdlib.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -41,7 +41,12 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define LCD_FRAME_BUFFER_LAYER0  0xD0000000
+#define LCD_FRAME_BUFFER_LAYER1  0xD0130000
+#define TIMEOUT_POMIARU 5000
+#ifndef LCD_COLOR_LIGHTRED
+#define LCD_COLOR_LIGHTRED      0xFFFC9F9F
+#endif
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -54,21 +59,24 @@
 /* USER CODE BEGIN PV */
 static uint32_t CzasKoncowy_Buzzera = 0;
 static uint8_t aktywny_buzzer = 0;
-static uint32_t CzasTrwania_Buzzera = 1000;
+static uint32_t CzasTrwania_Buzzera = 2000;
 
-static uint16_t dlugosc = 2000;				//dlugość między bramkami w [mm]
-volatile uint32_t CzasBramkiA = 0;			//edytowalna podczas przerwań
-volatile uint32_t CzasBramkiB = 0;			//edytowalna podczas przerwań
+static uint16_t dlugosc = 200;              // długość między bramkami w [mm]
+volatile uint32_t CzasBramkiA = 0;
+volatile uint32_t CzasBramkiB = 0;
 
-static double Ograniczenie = 1;
+static double Ograniczenie = 0.60;           // limit prędkości w [m/s]
 
+double ostatnia_predkosc = 0.0;
+double aktualna_predkosc = 0;
+char buf[32];
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 void buzzer(void);
-uint16_t SpeedCheck(void);
+double SpeedCheck(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -82,7 +90,6 @@ uint16_t SpeedCheck(void);
   */
 int main(void)
 {
-
   /* USER CODE BEGIN 1 */
 
   /* USER CODE END 1 */
@@ -105,30 +112,104 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_CRC_Init();
   MX_DMA2D_Init();
   MX_FMC_Init();
   MX_I2C3_Init();
   MX_LTDC_Init();
   MX_SPI5_Init();
-  MX_TIM1_Init();
-  MX_USART1_UART_Init();
+  MX_TIM2_Init();
+
   /* USER CODE BEGIN 2 */
+  __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, 0);
+  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);
+
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+  __HAL_RCC_GPIOB_CLK_ENABLE();
+  __HAL_RCC_GPIOC_CLK_ENABLE();
+  __HAL_RCC_GPIOD_CLK_ENABLE();
+  __HAL_RCC_GPIOE_CLK_ENABLE();
+  __HAL_RCC_GPIOF_CLK_ENABLE();
+  __HAL_RCC_GPIOG_CLK_ENABLE();
+  __HAL_RCC_FMC_CLK_ENABLE();
+
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+  GPIO_InitStruct.Alternate = GPIO_AF12_FMC;
+
+  GPIO_InitStruct.Pin = GPIO_PIN_5 | GPIO_PIN_6;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  GPIO_InitStruct.Pin = GPIO_PIN_0;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+  GPIO_InitStruct.Pin = GPIO_PIN_0 | GPIO_PIN_1 | GPIO_PIN_8 | GPIO_PIN_9 | GPIO_PIN_10 | GPIO_PIN_14 | GPIO_PIN_15;
+  HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+
+  GPIO_InitStruct.Pin = GPIO_PIN_0 | GPIO_PIN_1 | GPIO_PIN_7 | GPIO_PIN_8 | GPIO_PIN_9 | GPIO_PIN_10 | GPIO_PIN_11 | GPIO_PIN_12 | GPIO_PIN_13 | GPIO_PIN_14 | GPIO_PIN_15;
+  HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+
+  GPIO_InitStruct.Pin = GPIO_PIN_0 | GPIO_PIN_1 | GPIO_PIN_2 | GPIO_PIN_3 | GPIO_PIN_4 | GPIO_PIN_5 | GPIO_PIN_11 | GPIO_PIN_12 | GPIO_PIN_13 | GPIO_PIN_14 | GPIO_PIN_15;
+  HAL_GPIO_Init(GPIOF, &GPIO_InitStruct);
+
+  GPIO_InitStruct.Pin = GPIO_PIN_0 | GPIO_PIN_1 | GPIO_PIN_4 | GPIO_PIN_5 | GPIO_PIN_8 | GPIO_PIN_15;
+  HAL_GPIO_Init(GPIOG, &GPIO_InitStruct);
+
+
+  BSP_LCD_Init();
+  BSP_LCD_LayerDefaultInit(0, LCD_FRAME_BUFFER_LAYER0);
+  BSP_LCD_LayerDefaultInit(1, LCD_FRAME_BUFFER_LAYER1);
+  BSP_LCD_SelectLayer(1);
+  BSP_LCD_SetFont(&Font16);
+  BSP_LCD_SetBackColor(LCD_COLOR_WHITE);
+  BSP_LCD_Clear(LCD_COLOR_WHITE);
+
+  BSP_LCD_SetTextColor(LCD_COLOR_DARKBLUE);
+  BSP_LCD_DisplayStringAt(0, 10, (uint8_t*)"ODCINKOWY POMIAR", CENTER_MODE);
+  BSP_LCD_DisplayStringAt(0, 30, (uint8_t*)"PREDKOSCI", CENTER_MODE);
+
+  BSP_LCD_SetTextColor(LCD_COLOR_BLACK);
+  BSP_LCD_DisplayStringAt(0, 70, (uint8_t*)"Ostatni pomiar:", CENTER_MODE);
+
+  BSP_LCD_SetFont(&Font24);
+  BSP_LCD_DisplayStringAt(0, 100, (uint8_t*)"0.00 m/s", CENTER_MODE);
+  BSP_LCD_SetFont(&Font16);
+
 
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  CzasKoncowy_Buzzera = HAL_GetTick() + CzasTrwania_Buzzera;
-  aktywny_buzzer = 1;
 
   while (1)
   {
-	  SpeedCheck();
-	  buzzer();
+      aktualna_predkosc = SpeedCheck();
+      buzzer();
+      if (aktualna_predkosc > 0.0){
+          ostatnia_predkosc = aktualna_predkosc;
+          int calkowita = (int)ostatnia_predkosc;
+          int ulamkowa = (int)((ostatnia_predkosc - calkowita)*100);
+          sprintf(buf, "%d.%02d m/s", calkowita, ulamkowa);
+
+          BSP_LCD_SetBackColor(LCD_COLOR_WHITE);
+          BSP_LCD_SetTextColor(LCD_COLOR_RED);
+          BSP_LCD_SetFont(&Font24);
+          BSP_LCD_DisplayStringAt(0, 100, (uint8_t*)buf, CENTER_MODE);
+          BSP_LCD_SetFont(&Font16);
+
+          if (ostatnia_predkosc > Ograniczenie){
+              BSP_LCD_SetTextColor(LCD_COLOR_RED);
+              BSP_LCD_DisplayStringAt(0, 160, (uint8_t*)"! PRZEKROCZENIE !", CENTER_MODE);
+          }
+          else{
+              BSP_LCD_SetTextColor(LCD_COLOR_GREEN);
+              BSP_LCD_DisplayStringAt(0, 160, (uint8_t*)"   W NORMIE      ", CENTER_MODE);
+          }
+      }
+      HAL_Delay(10);
   }
     /* USER CODE END WHILE */
-
 
     /* USER CODE BEGIN 3 */
   /* USER CODE END 3 */
@@ -144,7 +225,7 @@ void SystemClock_Config(void)
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
   /** Configure the main internal regulator output voltage
-  */
+    */
   __HAL_RCC_PWR_CLK_ENABLE();
   __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
 
@@ -156,7 +237,7 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
   RCC_OscInitStruct.PLL.PLLM = 8;
-  RCC_OscInitStruct.PLL.PLLN = 336;
+  RCC_OscInitStruct.PLL.PLLN = 360;
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
   RCC_OscInitStruct.PLL.PLLQ = 7;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
@@ -164,8 +245,13 @@ void SystemClock_Config(void)
     Error_Handler();
   }
 
+  if (HAL_PWREx_EnableOverDrive() != HAL_OK)
+  {
+    Error_Handler();
+  }
+
   /** Initializes the CPU, AHB and APB buses clocks
-  */
+    */
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
@@ -182,66 +268,68 @@ void SystemClock_Config(void)
 /* USER CODE BEGIN 4 */
 // --- Funkcja obsługi przerwań ---
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
-    if (GPIO_Pin == GPIO_PIN_0) {
+    if(GPIO_Pin == GPIO_PIN_0){
         HAL_GPIO_TogglePin(GPIOG, GPIO_PIN_13); // LED1
-        CzasBramkiA = HAL_GetTick();
+        if (CzasBramkiA == 0){
+            CzasBramkiA = HAL_GetTick();
+        }
     }
 
-    if (GPIO_Pin == GPIO_PIN_1) {
+    if(GPIO_Pin == GPIO_PIN_5){
         HAL_GPIO_TogglePin(GPIOG, GPIO_PIN_14); // LED2
-        CzasBramkiB = HAL_GetTick();
+        if (CzasBramkiA != 0 && CzasBramkiB == 0){
+            CzasBramkiB = HAL_GetTick();
+        }
     }
 }
 
-uint16_t SpeedCheck(void){
-	uint8_t speed = 0;
-	if (CzasBramkiA != 0 && CzasBramkiB != 0){
-		speed = abs((CzasBramkiA - CzasBramkiB) / dlugosc);	//wynik w [m/s]
-		CzasBramkiA = 0;
-		CzasBramkiB = 0;
+double SpeedCheck(void){
+    double speed = 0;
+    if (CzasBramkiA != 0 && CzasBramkiB == 0){
+        if ((HAL_GetTick() - CzasBramkiA) > TIMEOUT_POMIARU){
+            CzasBramkiA = 0;
+            BSP_LCD_SetBackColor(LCD_COLOR_WHITE);
+            BSP_LCD_SetTextColor(LCD_COLOR_BLACK);
+            BSP_LCD_SetFont(&Font16);
+            BSP_LCD_DisplayStringAt(0, 130, (uint8_t*)"  RESET POMIARU  ", CENTER_MODE);
+        }
+    }
+    if (CzasBramkiA != 0 && CzasBramkiB != 0){
+        uint32_t czas;
+        if (CzasBramkiB > CzasBramkiA){
+             czas = CzasBramkiB - CzasBramkiA;
+        }
+        else{
+             czas = 0;
+        }
+        if (czas > 0){
+            speed = (double)dlugosc/(double)czas;
+        }
+        else{
+            speed = 999.9;
+        }
+        CzasBramkiA = 0;
+        CzasBramkiB = 0;
+    }
+    if (speed > Ograniczenie && speed < 999.0){
+        if (aktywny_buzzer == 0){
+            CzasKoncowy_Buzzera = HAL_GetTick() + CzasTrwania_Buzzera;
+            aktywny_buzzer = 1;
+            __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, 500);
+        }
+    }
+    return speed;
+}
+
+void buzzer(void){
+	if (HAL_GetTick() >= CzasKoncowy_Buzzera && aktywny_buzzer == 1){
+         __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, 0);
+		 aktywny_buzzer = 0;
 	}
-	if (speed > Ograniczenie){        //ustaw czas
-	  CzasKoncowy_Buzzera = HAL_GetTick() + CzasTrwania_Buzzera;
-	  aktywny_buzzer = 1;	//tu jednokrotnie włączy
-	}
-	return speed;
-}
-
-void buzzer(void)
-{
-	 if (HAL_GetTick() >= CzasKoncowy_Buzzera)
-	    {
-		 	 aktywny_buzzer = 0;	//to jednokrotnie wyłączy
-	    }
-
-	if (aktywny_buzzer) {
-			HAL_GPIO_TogglePin(GPIOG, GPIO_PIN_14);	//tu wielokrotnie
-	 }
 }
 
 
-
-/**
-  * @brief  Period elapsed callback in non blocking mode
-  * @note   This function is called  when TIM6 interrupt took place, inside
-  * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
-  * a global variable "uwTick" used as application time base.
-  * @param  htim : TIM handle
-  * @retval None
-  */
-void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
-{
-  /* USER CODE BEGIN Callback 0 */
-
-  /* USER CODE END Callback 0 */
-  if (htim->Instance == TIM6)
-  {
-    HAL_IncTick();
-  }
-  /* USER CODE BEGIN Callback 1 */
-
-  /* USER CODE END Callback 1 */
-}
+/* USER CODE END 4 */
 
 /**
   * @brief  This function is executed in case of error occurrence.
@@ -257,7 +345,7 @@ void Error_Handler(void)
   }
   /* USER CODE END Error_Handler_Debug */
 }
-#ifdef USE_FULL_ASSERT
+#ifdef  USE_FULL_ASSERT
 /**
   * @brief  Reports the name of the source file and the source line number
   *         where the assert_param error has occurred.

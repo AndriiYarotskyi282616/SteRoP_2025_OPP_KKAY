@@ -40,7 +40,7 @@ void MX_I2C3_Init(void)
   hi2c3.Instance = I2C3;
   hi2c3.Init.ClockSpeed = 100000;
   hi2c3.Init.DutyCycle = I2C_DUTYCYCLE_2;
-  hi2c3.Init.OwnAddress1 = 0;
+  hi2c3.Init.OwnAddress1 = 130;
   hi2c3.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
   hi2c3.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
   hi2c3.Init.OwnAddress2 = 0;
@@ -86,19 +86,19 @@ void HAL_I2C_MspInit(I2C_HandleTypeDef* i2cHandle)
     PC9     ------> I2C3_SDA
     PA8     ------> I2C3_SCL
     */
-    GPIO_InitStruct.Pin = I2C3_SDA_Pin;
+    GPIO_InitStruct.Pin = GPIO_PIN_9;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_OD;
-    GPIO_InitStruct.Pull = GPIO_PULLUP;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
     GPIO_InitStruct.Alternate = GPIO_AF4_I2C3;
-    HAL_GPIO_Init(I2C3_SDA_GPIO_Port, &GPIO_InitStruct);
+    HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
-    GPIO_InitStruct.Pin = I2C3_SCL_Pin;
+    GPIO_InitStruct.Pin = GPIO_PIN_8;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_OD;
-    GPIO_InitStruct.Pull = GPIO_PULLUP;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
     GPIO_InitStruct.Alternate = GPIO_AF4_I2C3;
-    HAL_GPIO_Init(I2C3_SCL_GPIO_Port, &GPIO_InitStruct);
+    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
     /* I2C3 clock enable */
     __HAL_RCC_I2C3_CLK_ENABLE();
@@ -123,9 +123,9 @@ void HAL_I2C_MspDeInit(I2C_HandleTypeDef* i2cHandle)
     PC9     ------> I2C3_SDA
     PA8     ------> I2C3_SCL
     */
-    HAL_GPIO_DeInit(I2C3_SDA_GPIO_Port, I2C3_SDA_Pin);
+    HAL_GPIO_DeInit(GPIOC, GPIO_PIN_9);
 
-    HAL_GPIO_DeInit(I2C3_SCL_GPIO_Port, I2C3_SCL_Pin);
+    HAL_GPIO_DeInit(GPIOA, GPIO_PIN_8);
 
   /* USER CODE BEGIN I2C3_MspDeInit 1 */
 
