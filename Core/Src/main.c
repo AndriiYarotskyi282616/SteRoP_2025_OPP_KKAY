@@ -301,6 +301,7 @@ double SpeedCheck(void){
     if (CzasBramkiA != 0 && CzasBramkiB == 0){
         if ((HAL_GetTick() - CzasBramkiA) > TIMEOUT_POMIARU){
             CzasBramkiA = 0;
+
             //BSP_LCD_SetBackColor(LCD_COLOR_WHITE);
             //BSP_LCD_SetTextColor(LCD_COLOR_BLACK);
             //BSP_LCD_SetFont(&Font16);
