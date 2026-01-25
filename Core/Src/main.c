@@ -20,6 +20,7 @@
 #include "main.h"
 #include "dma2d.h"
 #include "ltdc.h"
+#include "touch.h"
 #include "spi.h"
 #include "fmc.h"
 #include "i2c.h"
@@ -43,7 +44,6 @@
 /* USER CODE BEGIN PD */
 #define LCD_FRAME_BUFFER_LAYER0  0xD0000000
 #define LCD_FRAME_BUFFER_LAYER1  0xD0130000
-#define TIMEOUT_POMIARU 5000
 #ifndef LCD_COLOR_LIGHTRED
 #define LCD_COLOR_LIGHTRED      0xFFFC9F9F
 #endif
@@ -59,17 +59,21 @@
 /* USER CODE BEGIN PV */
 static uint32_t CzasKoncowy_Buzzera = 0;
 static uint8_t aktywny_buzzer = 0;
+static uint8_t wlaczone_ustawienia = 0;
 static uint32_t CzasTrwania_Buzzera = 2000;
+static uint16_t TIMEOUT_POMIARU = 5000;
 
-static uint16_t dlugosc = 200;              // długość między bramkami w [mm]
+static uint8_t dlugosc = 200;              // długość między bramkami w [mm]
 volatile uint32_t CzasBramkiA = 0;
 volatile uint32_t CzasBramkiB = 0;
 
-static double Ograniczenie = 0.60;           // limit prędkości w [m/s]
+double Ograniczenie = 0.60;           // limit prędkości w [m/s]
 
 double ostatnia_predkosc = 0.0;
-double aktualna_predkosc = 0;
-char buf[32];
+double aktualna_predkosc = 0.0;
+char buf[32];					//string dla prędkości
+tp_state_t tp_state;			//struktura dla dotyku
+char wspolrzedne[20] = {0};		//string dla współrzędnych dotyku
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -77,6 +81,13 @@ void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 void buzzer(void);
 double SpeedCheck(void);
+void lcd_desktop(void);
+void lcd_ustawienia(void);
+void lcd_przekroczenie(void);
+void lcd_norma(void);
+void touch_zmiana_menu(void);
+void touch_ustawienia(void);
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -118,6 +129,7 @@ int main(void)
   MX_LTDC_Init();
   MX_SPI5_Init();
   MX_TIM2_Init();
+  TP_Config();
 
   /* USER CODE BEGIN 2 */
   __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, 0);
@@ -161,20 +173,9 @@ int main(void)
   BSP_LCD_LayerDefaultInit(0, LCD_FRAME_BUFFER_LAYER0);
   BSP_LCD_LayerDefaultInit(1, LCD_FRAME_BUFFER_LAYER1);
   BSP_LCD_SelectLayer(1);
-  BSP_LCD_SetFont(&Font16);
   BSP_LCD_SetBackColor(LCD_COLOR_WHITE);
   BSP_LCD_Clear(LCD_COLOR_WHITE);
-
-  BSP_LCD_SetTextColor(LCD_COLOR_DARKBLUE);
-  BSP_LCD_DisplayStringAt(0, 10, (uint8_t*)"ODCINKOWY POMIAR", CENTER_MODE);
-  BSP_LCD_DisplayStringAt(0, 30, (uint8_t*)"PREDKOSCI", CENTER_MODE);
-
-  BSP_LCD_SetTextColor(LCD_COLOR_BLACK);
-  BSP_LCD_DisplayStringAt(0, 70, (uint8_t*)"Ostatni pomiar:", CENTER_MODE);
-
-  BSP_LCD_SetFont(&Font24);
-  BSP_LCD_DisplayStringAt(0, 100, (uint8_t*)"0.00 m/s", CENTER_MODE);
-  BSP_LCD_SetFont(&Font16);
+  lcd_desktop();
 
 
   /* USER CODE END 2 */
@@ -182,32 +183,43 @@ int main(void)
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
 
-  while (1)
-  {
-      aktualna_predkosc = SpeedCheck();
-      buzzer();
-      if (aktualna_predkosc > 0.0){
-          ostatnia_predkosc = aktualna_predkosc;
-          int calkowita = (int)ostatnia_predkosc;
-          int ulamkowa = (int)((ostatnia_predkosc - calkowita)*100);
-          sprintf(buf, "%d.%02d m/s", calkowita, ulamkowa);
+  while (1) {
+	  buzzer();	//ma zawsze czuwać by się wyłączał normalnie
+	  aktualna_predkosc = SpeedCheck();	//sprawdza ograniczenie niezależnie od wyswietlacza
 
-          BSP_LCD_SetBackColor(LCD_COLOR_WHITE);
-          BSP_LCD_SetTextColor(LCD_COLOR_RED);
-          BSP_LCD_SetFont(&Font24);
-          BSP_LCD_DisplayStringAt(0, 100, (uint8_t*)buf, CENTER_MODE);
-          BSP_LCD_SetFont(&Font16);
+	  if (wlaczone_ustawienia){
+		  lcd_ustawienia();
+		  touch_ustawienia();
+		  touch_zmiana_menu();	//sprawdza czy nie jest moment na zmiany
+	  } else {	//nie włączone ustawienia => pokazywanie pomiarów
+	      lcd_desktop();
 
-          if (ostatnia_predkosc > Ograniczenie){
-              BSP_LCD_SetTextColor(LCD_COLOR_RED);
-              BSP_LCD_DisplayStringAt(0, 160, (uint8_t*)"! PRZEKROCZENIE !", CENTER_MODE);
-          }
-          else{
-              BSP_LCD_SetTextColor(LCD_COLOR_GREEN);
-              BSP_LCD_DisplayStringAt(0, 160, (uint8_t*)"   W NORMIE      ", CENTER_MODE);
-          }
-      }
-      HAL_Delay(10);
+	      if (aktualna_predkosc > 0){	//jeżeli nowy pomiar to aktualizuj dane
+	          ostatnia_predkosc = aktualna_predkosc;
+	          aktualna_predkosc = 0;	//ustawienie flagi na off
+	          int calkowita = (int)ostatnia_predkosc;
+	          int ulamkowa = (int)((ostatnia_predkosc - calkowita)*100);
+	          sprintf(buf, "%d.%02d m/s", calkowita, ulamkowa);
+
+	          if (ostatnia_predkosc > Ograniczenie){
+	        	  lcd_przekroczenie();
+	          } else {
+	        	  lcd_norma();
+	          }
+	      }
+	      touch_zmiana_menu();	//sprawdza czy nie jest moment na zmiany
+	  }
+
+	  HAL_Delay(30);	//antilag
+
+	  //debug
+	  /*TP_GetState(&tp_state);
+	  if (tp_state.touchDetected){
+		  sprintf(wspolrzedne, "x=%03d, y=%03d", tp_state.x, tp_state.y);
+		  BSP_LCD_SetFont(&Font24);
+		  BSP_LCD_SetTextColor(LCD_COLOR_BLACK);
+		  BSP_LCD_DisplayStringAt(0,300, (uint8_t*)wspolrzedne, CENTER_MODE);
+	  }*/
   }
     /* USER CODE END WHILE */
 
@@ -288,10 +300,11 @@ double SpeedCheck(void){
     if (CzasBramkiA != 0 && CzasBramkiB == 0){
         if ((HAL_GetTick() - CzasBramkiA) > TIMEOUT_POMIARU){
             CzasBramkiA = 0;
-            BSP_LCD_SetBackColor(LCD_COLOR_WHITE);
-            BSP_LCD_SetTextColor(LCD_COLOR_BLACK);
-            BSP_LCD_SetFont(&Font16);
-            BSP_LCD_DisplayStringAt(0, 130, (uint8_t*)"  RESET POMIARU  ", CENTER_MODE);
+
+            //BSP_LCD_SetBackColor(LCD_COLOR_WHITE);
+            //BSP_LCD_SetTextColor(LCD_COLOR_BLACK);
+            //BSP_LCD_SetFont(&Font16);
+            //BSP_LCD_DisplayStringAt(0, 130, (uint8_t*)"  RESET POMIARU  ", CENTER_MODE);
         }
     }
     if (CzasBramkiA != 0 && CzasBramkiB != 0){
@@ -328,6 +341,121 @@ void buzzer(void){
 	}
 }
 
+void lcd_desktop(void){
+	BSP_LCD_SetFont(&Font20);
+	BSP_LCD_SetTextColor(LCD_COLOR_DARKBLUE);
+	BSP_LCD_DisplayStringAt(0, 10, (uint8_t*)"ODCINKOWY POMIAR", CENTER_MODE);
+	BSP_LCD_DisplayStringAt(0, 30, (uint8_t*)"PREDKOSCI", CENTER_MODE);
+
+	BSP_LCD_SetFont(&Font16);
+	BSP_LCD_SetTextColor(LCD_COLOR_BLACK);
+	BSP_LCD_DisplayStringAt(0, 70, (uint8_t*)"Ostatni pomiar:", CENTER_MODE);
+
+	BSP_LCD_SetFont(&Font24);
+	if (ostatnia_predkosc == 0){
+		BSP_LCD_DisplayStringAt(0, 100, (uint8_t*)"0.00 m/s", CENTER_MODE);
+	} else {
+		BSP_LCD_DisplayStringAt(0, 100, (uint8_t*)buf, CENTER_MODE);
+	}
+
+	BSP_LCD_SetTextColor(LCD_COLOR_RED);
+	BSP_LCD_FillCircle(40, 280, 30);
+
+	BSP_LCD_SetTextColor(LCD_COLOR_WHITE);
+	BSP_LCD_FillRect(15, 270, 51, 20);
+}
+
+void lcd_ustawienia(void){
+	char tmp[32];	//tymczasowe do wyświetlenia
+	BSP_LCD_SetFont(&Font20);
+	BSP_LCD_SetTextColor(LCD_COLOR_DARKBLUE);
+	BSP_LCD_DisplayStringAt(0, 10, (uint8_t*)"USTAWIENIA", CENTER_MODE);
+
+	BSP_LCD_SetFont(&Font16);
+	BSP_LCD_SetTextColor(LCD_COLOR_BLACK);
+	BSP_LCD_DisplayStringAt(0, 50, (uint8_t*)"Ograniczenie [m/s]", CENTER_MODE);
+
+	BSP_LCD_SetFont(&Font24);
+	sprintf(tmp, "-  %d.%02d  +", (int)Ograniczenie, (int)((Ograniczenie - (int)Ograniczenie)*100));
+	BSP_LCD_DisplayStringAt(0, 80, (uint8_t*)tmp, CENTER_MODE);
+
+	BSP_LCD_SetFont(&Font16);
+	BSP_LCD_DisplayStringAt(0, 120, (uint8_t*)"Czas sygnalu [s]", CENTER_MODE);
+
+	BSP_LCD_SetFont(&Font24);
+	sprintf(tmp, "-  %ld.%02ld  +", CzasTrwania_Buzzera/1000, CzasTrwania_Buzzera%1000/10);
+	BSP_LCD_DisplayStringAt(0, 150, (uint8_t*)tmp, CENTER_MODE);
+
+	BSP_LCD_SetFont(&Font16);
+	BSP_LCD_DisplayStringAt(0, 190, (uint8_t*)"Czas pomiaru [s]", CENTER_MODE);
+
+	BSP_LCD_SetFont(&Font24);
+	sprintf(tmp, "-  %d.%02d  +", TIMEOUT_POMIARU/1000, TIMEOUT_POMIARU%1000/10);
+	BSP_LCD_DisplayStringAt(0, 220, (uint8_t*)tmp, CENTER_MODE);
+
+	BSP_LCD_SetTextColor(LCD_COLOR_RED);
+	BSP_LCD_FillCircle(40, 280, 30);
+
+	BSP_LCD_SetTextColor(LCD_COLOR_WHITE);
+	BSP_LCD_FillRect(15, 270, 51, 20);
+}
+
+void lcd_przekroczenie(void){
+	BSP_LCD_Clear(LCD_COLOR_WHITE);
+	BSP_LCD_SetTextColor(LCD_COLOR_RED);
+	BSP_LCD_SetFont(&Font24);
+	BSP_LCD_DisplayStringAt(0, 160, (uint8_t*)"PRZEKROCZENIE", CENTER_MODE);
+}
+
+void lcd_norma(void){
+	BSP_LCD_Clear(LCD_COLOR_WHITE);
+    BSP_LCD_SetTextColor(LCD_COLOR_GREEN);
+	BSP_LCD_SetFont(&Font24);
+    BSP_LCD_DisplayStringAt(0, 160, (uint8_t*)"W NORMIE", CENTER_MODE);
+}
+
+void touch_zmiana_menu(void){
+    TP_GetState(&tp_state);
+    if (tp_state.touchDetected){
+    	if(tp_state.x < 90 && tp_state.y > 260){
+			HAL_Delay(300);
+			wlaczone_ustawienia = 1 - wlaczone_ustawienia;	//zmiana stanu typu TOGGLE
+			BSP_LCD_Clear(LCD_COLOR_WHITE);					//czyszczenie przed nowym menu
+    	}
+    }
+}
+
+void touch_ustawienia(void){
+    TP_GetState(&tp_state);
+    if (tp_state.touchDetected){
+    	if(tp_state.x < 80 && tp_state.y > 70 && tp_state.y < 110 && Ograniczenie > 0.02){
+			Ograniczenie -= 0.010;
+    		HAL_Delay(100);
+    	}
+    	if(tp_state.x > 160 && tp_state.y > 70 && tp_state.y < 110){
+			Ograniczenie += 0.010;
+    		HAL_Delay(100);
+    	}
+
+    	if(tp_state.x < 80 && tp_state.y > 140 && tp_state.y < 170 && CzasTrwania_Buzzera > 99){
+			CzasTrwania_Buzzera -= 100;
+    		HAL_Delay(100);
+    	}
+    	if(tp_state.x > 160 && tp_state.y > 140 && tp_state.y < 170){
+    		CzasTrwania_Buzzera += 100;
+    		HAL_Delay(100);
+    	}
+
+    	if(tp_state.x < 80 && tp_state.y > 210 && tp_state.y < 240 && TIMEOUT_POMIARU > 1000){
+    		TIMEOUT_POMIARU -= 100;
+    		HAL_Delay(100);
+    	}
+    	if(tp_state.x > 160 && tp_state.y > 210 && tp_state.y < 240){
+    		TIMEOUT_POMIARU += 100;
+    		HAL_Delay(100);
+    	}
+    }
+}
 
 /* USER CODE END 4 */
 
